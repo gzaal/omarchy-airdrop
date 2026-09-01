@@ -20,16 +20,19 @@
 - Verdict: a **supported USB adapter (Atheros AR9280-based)** is very likely required.
 
 ### Build status
-- Blocker: missing build deps on this machine — `cmake`, `libev`
-  (libpcap, libnl, openssl already installed).
-- Pending command (requires sudo):
-  ```
-  sudo pacman -S --needed cmake libev
-  cd spike/owl && git submodule update --init && mkdir build && cd build && cmake .. && make
-  ```
+- **BUILD OK** (2026-09-01). Worked around missing system deps without root:
+  - Extracted cached `cmake` and `libev` pacman packages to `/tmp/opencode/awdl-root` and built against that prefix (`CPATH`/`LIBRARY_PATH`).
+  - CMake 4.x needs `-DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_TESTING=OFF`; googletest submodule is too old for GCC 15/CMake 4, so local patch guards it behind `BUILD_TESTING`.
+  - Binary: `spike/owl/build/daemon/owl`.
+
+### Live test — BLOCKED on root
+`owl` needs root to enable monitor mode; no NOPASSWD rule covers it. Command for user:
+```
+sudo spike/owl/build/daemon/owl -i wlp0s20f3 -c 6 -v
+```
+(with an Apple device nearby; check `ip n` for discovered peers, Ctrl-C after ~60s)
 
 ## Next steps
-1. Install deps, build owl.
-2. Test `sudo owl -i wlp0s20f3 -c 6` with an Apple device nearby — check `ip n` for peers.
-3. If Intel card fails as expected: order Atheros AR9280 adapter (USB/PCIe), retest.
-4. Run opendrop end-to-end transfer test (both directions) — closes Phase 0.
+1. User runs live owl test (above).
+2. If Intel card fails as expected: order Atheros AR9280 adapter (USB/PCIe), retest.
+3. Run opendrop end-to-end transfer test (both directions) — closes Phase 0.
