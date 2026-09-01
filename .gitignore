@@ -1,3 +1,5 @@
 spike/owl/
 spike/opendrop/
 spike/*/build/
+__pycache__/
+*.pyc
