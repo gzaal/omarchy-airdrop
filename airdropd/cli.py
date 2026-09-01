@@ -49,10 +49,16 @@ def cmd_peers(args) -> int:
         from airdropd import awdl
 
         try:
-            rows += [
-                (p.name or p.peer_id, p.address, "airdrop", "")
-                for p in awdl.discover_peers(iface=args.iface or _awdl_iface())
-            ]
+            iface = args.iface or _awdl_iface()
+            if iface is None:
+                print("airdrop: no AWDL interface found", file=sys.stderr)
+            else:
+                rows += [
+                    (p.name or p.peer_id, p.address, "airdrop", "")
+                    for p in awdl.discover_peers(
+                        iface=iface, timeout=max(args.timeout, 5.0)
+                    )
+                ]
         except awdl.AwdlError as exc:
             print(f"airdrop: {exc}", file=sys.stderr)
     if not rows:
@@ -136,28 +142,26 @@ def _send_airdrop(args, paths: list[Path]) -> int:
     if iface is None:
         print("error: no AWDL interface found (is the owl service running?)", file=sys.stderr)
         return 1
-    if not paths:
-        print("error: no files", file=sys.stderr)
-        return 1
     try:
         if args.to:
             receiver = args.to
         else:
-            peers = awdl.discover_peers(iface=iface)
+            peers = awdl.discover_peers(iface=iface, timeout=max(args.timeout, 5.0))
             if not peers:
                 print("error: no AirDrop receivers found", file=sys.stderr)
                 return 1
-            for p in peers:
-                print(f"  {p.index}. {p.name or p.peer_id} ({p.address})")
+            for i, p in enumerate(peers, 1):
+                print(f"  {i}. {p.name or p.peer_id} ({p.address})")
             if not sys.stdin.isatty():
-                print("error: multiple receivers, use --to <index-or-id>", file=sys.stderr)
+                print("error: multiple receivers, use --to <receiver-id>", file=sys.stderr)
                 return 1
             choice = input("Send to: ").strip()
             try:
-                receiver = str(peers[int(choice)].index)
+                peer = peers[int(choice) - 1]
             except (ValueError, IndexError):
                 print("error: invalid choice", file=sys.stderr)
                 return 1
+            receiver = peer.peer_id or peer.address
         log.info("sending via AirDrop on %s", iface)
         for p in paths:
             awdl.send_native(p, receiver, iface=iface)
@@ -176,6 +180,9 @@ def cmd_receive(args) -> int:
         if iface is None:
             print("error: no AWDL interface found (is the owl service running?)", file=sys.stderr)
             return 1
+        if args.prompt or args.download_dir or args.accept_policy:
+            print("note: --prompt/--download-dir/--accept-policy are ignored in "
+                  "AirDrop mode; files land in ~/.opendrop", file=sys.stderr)
         try:
             log.info("receiving via AirDrop on %s (files land in ~/.opendrop)", iface)
             awdl.receive_native(iface=iface)
@@ -232,7 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_peers = sub.add_parser("peers", help="discover nearby peers")
     p_peers.add_argument("--timeout", type=float, default=2.0)
     p_peers.add_argument("--airdrop", action="store_true",
-                         help="also scan for native AirDrop receivers (needs opendrop + AWDL)")
+                         help="only scan for native AirDrop receivers (needs opendrop + AWDL)")
     p_peers.add_argument("--iface", help="AWDL interface override")
     p_peers.set_defaults(fn=cmd_peers)
 

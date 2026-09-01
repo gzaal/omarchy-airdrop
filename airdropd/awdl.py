@@ -4,7 +4,9 @@ import json
 import logging
 import re
 import shutil
+import signal
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,37 +52,59 @@ def iface_ipv6(iface: str) -> str | None:
 def owl_running(iface: str = DEFAULT_AWDL_IFACE) -> bool:
     try:
         out = subprocess.run(
-            ["pgrep", "-f", rf"\bow\b.*\s{re.escape(iface)}(\s|$)"],
+            ["pgrep", "-x", "owl"],
             capture_output=True, text=True, timeout=5,
         ).stdout
-        return bool(out.strip())
     except (subprocess.SubprocessError, OSError):
         return False
+    for pid in out.split():
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode("utf-8").split("\0")
+        except OSError:
+            continue
+        if iface in cmdline:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
 class NativePeer:
-    index: int
     name: str | None
     address: str
     peer_id: str
-    discoverable: bool
+    discoverable: bool = True
 
 
 def discover_peers(iface: str = DEFAULT_AWDL_IFACE, timeout: float = 5.0,
                    report: Path = OPENDROP_REPORT) -> list[NativePeer]:
     if not opendrop_available():
         raise AwdlError("opendrop is not installed")
+    start = time.time()
     try:
-        subprocess.run(
-            ["opendrop", "find", "-i", iface],
-            timeout=timeout, capture_output=True,
-        )
-    except subprocess.TimeoutExpired:
+        report.unlink()
+    except FileNotFoundError:
         pass
     except OSError as exc:
+        raise AwdlError(f"cannot reset discovery report: {exc}") from exc
+    try:
+        proc = subprocess.Popen(
+            ["opendrop", "find", "-i", iface],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
         raise AwdlError(f"failed to run opendrop: {exc}") from exc
-    if not report.is_file():
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # upstream opendrop only writes its report in a finally block reached
+        # via KeyboardInterrupt, so SIGINT (not SIGTERM/SIGKILL) is required
+        proc.send_signal(signal.SIGINT)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    if not report.is_file() or report.stat().st_mtime < start - 1:
         return []
     try:
         data = json.loads(report.read_text(encoding="utf-8"))
@@ -89,28 +113,28 @@ def discover_peers(iface: str = DEFAULT_AWDL_IFACE, timeout: float = 5.0,
     peers: list[NativePeer] = []
     if not isinstance(data, list):
         return []
-    for i, entry in enumerate(data):
+    for entry in data:
         if not isinstance(entry, dict) or "address" not in entry:
             continue
+        if not entry.get("discoverable"):
+            continue
         peers.append(NativePeer(
-            index=i,
             name=entry.get("name"),
             address=str(entry["address"]),
             peer_id=str(entry.get("id") or ""),
-            discoverable=bool(entry.get("discoverable")),
         ))
-    return [p for p in peers if p.discoverable]
+    return peers
 
 
 def send_native(file: Path, receiver: str, iface: str = DEFAULT_AWDL_IFACE,
-                name: str | None = None) -> None:
+                name: str | None = None, timeout: float | None = None) -> None:
     if not opendrop_available():
         raise AwdlError("opendrop is not installed")
     cmd = ["opendrop", "send", "-f", str(file), "-r", receiver, "-i", iface]
     if name:
         cmd += ["-n", name]
     try:
-        proc = subprocess.run(cmd, timeout=300)
+        proc = subprocess.run(cmd, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise AwdlError("airdrop send timed out") from exc
     except OSError as exc:
@@ -126,9 +150,11 @@ def receive_native(iface: str = DEFAULT_AWDL_IFACE, name: str | None = None) -> 
     if name:
         cmd += ["-n", name]
     try:
-        subprocess.run(cmd)
+        proc = subprocess.run(cmd)
     except OSError as exc:
         raise AwdlError(f"failed to run opendrop: {exc}") from exc
+    if proc.returncode != 0:
+        raise AwdlError(f"opendrop receive failed with exit code {proc.returncode}")
 
 
 def native_status(iface: str | None = None) -> dict:

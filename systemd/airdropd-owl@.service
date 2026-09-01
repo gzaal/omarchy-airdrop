@@ -1,15 +1,28 @@
 [Unit]
-Description=AWDL daemon (owl) on %i for omarchy-airdrop
+Description=AWDL daemon (owl) for omarchy-airdrop on physical wifi iface %i
+# %i is the PHYSICAL wifi interface (e.g. wlp3s0) that owl puts into
+# monitor mode; owl then creates the virtual awdl0 interface.
+Documentation=https://github.com/seemoo-lab/owl
 After=network.target
-ConditionPathExists=/usr/local/bin/owl
+ConditionPathExists=/sys/class/net/%i
 
 [Service]
 Type=simple
+# adjust if owl is installed elsewhere (e.g. /usr/bin/owl)
 ExecStart=/usr/local/bin/owl -i %i -c 6
 Restart=on-failure
 RestartSec=5
-# owl needs raw monitor-mode access; it must run as root
-Nice=-5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+# owl must run as root for monitor mode; sandbox what we can without
+# breaking raw packet access (validated against issue #1 hardware pending)
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectSystem=full
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_PACKET AF_INET AF_INET6
+SyslogIdentifier=owl
 
 [Install]
 WantedBy=multi-user.target
