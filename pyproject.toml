@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omarchy-airdrop"
+version = "0.1.0"
+description = "AirDrop-style send/receive for Omarchy (LocalSend v2 compatible)"
+requires-python = ">=3.12"
+license = "MIT"
+
+[project.scripts]
+airdrop = "airdropd.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["airdropd"]
