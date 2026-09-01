@@ -33,11 +33,21 @@ class Config:
         kwargs = {k: v for k, v in data.items() if k in known}
         if "download_dir" in kwargs:
             kwargs["download_dir"] = Path(kwargs["download_dir"]).expanduser()
+        for int_key in ("port", "max_file_size"):
+            if int_key in kwargs:
+                try:
+                    kwargs[int_key] = int(kwargs[int_key])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"invalid {int_key}: {kwargs[int_key]!r}") from exc
         cfg = cls(**kwargs)
         if cfg.accept_policy not in ACCEPT_POLICIES:
             raise ValueError(f"invalid accept_policy: {cfg.accept_policy}")
         if cfg.protocol not in ("http", "https"):
             raise ValueError(f"invalid protocol: {cfg.protocol}")
+        if not 0 < cfg.port <= 65535:
+            raise ValueError(f"invalid port: {cfg.port}")
+        if cfg.max_file_size < 0:
+            raise ValueError(f"invalid max_file_size: {cfg.max_file_size}")
         return cfg
 
 

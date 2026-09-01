@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import http.client
+import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 
 from airdropd import identity
@@ -16,6 +18,7 @@ from airdropd.localsend import (
 )
 
 log = logging.getLogger(__name__)
+_FP_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class SendError(Exception):
@@ -23,11 +26,23 @@ class SendError(Exception):
 
 
 def _connection(peer: Peer, timeout: float = 10.0) -> http.client.HTTPConnection:
+    conn: http.client.HTTPConnection
     if peer.protocol == "https":
-        return http.client.HTTPSConnection(
+        conn = http.client.HTTPSConnection(
             peer.ip, peer.port, context=identity.client_ssl_context(), timeout=timeout
         )
-    return http.client.HTTPConnection(peer.ip, peer.port, timeout=timeout)
+        conn.connect()
+        der = conn.sock.getpeercert(binary_form=True)
+        if der is not None:
+            actual = hashlib.sha256(der).hexdigest()
+            if _FP_RE.fullmatch(peer.fingerprint) and actual != peer.fingerprint:
+                conn.close()
+                raise SendError(
+                    f"{peer.alias}: certificate fingerprint mismatch (possible MITM)"
+                )
+    else:
+        conn = http.client.HTTPConnection(peer.ip, peer.port, timeout=timeout)
+    return conn
 
 
 def _post_json(conn: http.client.HTTPConnection, path: str, payload: dict) -> dict:
@@ -49,6 +64,19 @@ def _error_text(data: bytes) -> str:
         return str(parsed.get("error") or parsed)
     except (ValueError, UnicodeDecodeError):
         return data.decode("utf-8", "replace")[:200]
+
+
+def cancel_session(peer: Peer, session_id: str) -> None:
+    try:
+        conn = _connection(peer)
+    except SendError:
+        return
+    try:
+        _post_json(conn, f"{API_PREFIX}/cancel", {"sessionId": session_id})
+    except (SendError, OSError):
+        pass
+    finally:
+        conn.close()
 
 
 def _noop_log(name: str, pct: int) -> None:
@@ -96,8 +124,11 @@ def upload_file(peer: Peer, session_id: str, file_id: str, token: str,
             "POST", url, body=body_iter(),
             headers={"Content-Type": "application/octet-stream", "Content-Length": str(size)},
         )
-        resp = conn.getresponse()
-        data = resp.read()
+        try:
+            resp = conn.getresponse()
+            data = resp.read()
+        except (BrokenPipeError, ConnectionError) as exc:
+            raise SendError(f"upload {path.name} aborted: {exc}") from exc
         if resp.status != 200:
             raise SendError(f"upload {path.name} -> HTTP {resp.status}: {_error_text(data)}")
     finally:
@@ -113,11 +144,15 @@ def send_files(peer: Peer, sender: DeviceInfo, paths: list[Path],
         ))
     session_id, tokens = prepare_upload(peer, sender, files)
     delivered: list[Path] = []
-    for f, p in zip(files, paths):
-        token = tokens.get(f.file_id)
-        if token is None:
-            raise SendError(f"receiver did not provide a token for {p.name}")
-        upload_file(peer, session_id, f.file_id, token, p, f.size,
-                    progress_log=progress_log or _noop_log)
-        delivered.append(p)
+    try:
+        for f, p in zip(files, paths):
+            token = tokens.get(f.file_id)
+            if token is None:
+                raise SendError(f"receiver did not provide a token for {p.name}")
+            upload_file(peer, session_id, f.file_id, token, p, f.size,
+                        progress_log=progress_log or _noop_log)
+            delivered.append(p)
+    except SendError:
+        cancel_session(peer, session_id)
+        raise
     return delivered

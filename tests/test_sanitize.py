@@ -30,6 +30,18 @@ def test_slash_only():
     assert sanitize_filename("////") == "unnamed"
 
 
+def test_control_chars_stripped():
+    assert sanitize_filename("bad\x00name.txt") == "badname.txt"
+    assert sanitize_filename("x\x1f\x7fy") == "xy"
+
+
+def test_long_name_truncated():
+    name = "a" * 500 + ".txt"
+    out = sanitize_filename(name)
+    assert len(out.encode()) <= 200
+    assert out.endswith(".txt")
+
+
 def test_collision(tmp_path):
     first = resolve_collision(str(tmp_path), "file.txt")
     assert first == "file.txt"

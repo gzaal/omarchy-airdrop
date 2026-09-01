@@ -4,8 +4,10 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -47,7 +49,12 @@ class PendingFile:
 class Session:
     sender_alias: str
     directory: Path
+    created: float = field(default_factory=time.monotonic)
     files: dict[str, PendingFile] = field(default_factory=dict)
+
+
+MAX_OPEN_SESSIONS = 16
+SESSION_TTL = 30 * 60
 
 
 class ReceiverState:
@@ -58,21 +65,32 @@ class ReceiverState:
         self.sessions: dict[str, Session] = {}
         self.lock = threading.Lock()
 
+    def _gc_locked(self, now: float) -> None:
+        stale = [sid for sid, s in self.sessions.items() if now - s.created > SESSION_TTL]
+        for sid in stale:
+            session = self.sessions.pop(sid)
+            shutil.rmtree(session.directory, ignore_errors=True)
+
     def open_session(self, req: PrepareUploadRequest) -> tuple[str, dict[str, str]]:
         if self.cfg.accept_policy == "auto-deny":
             raise Reject(403, "receiver is not accepting files")
+        for f in req.files:
+            if f.size > self.cfg.max_file_size:
+                raise Reject(413, f"file {f.file_name} exceeds size limit")
         summary = ", ".join(f"{f.file_name} ({f.size} bytes)" for f in req.files)
         if self.cfg.accept_policy == "ask":
             if self.prompt is None or not self.prompt(req.sender.alias, summary):
                 log.info("rejected transfer from %s", req.sender.alias)
                 raise Reject(403, "transfer rejected by user")
+        with self.lock:
+            self._gc_locked(time.monotonic())
+            if len(self.sessions) >= MAX_OPEN_SESSIONS:
+                raise Reject(503, "too many pending transfers")
         session_dir = Path(self.cfg.download_dir).expanduser() / new_session_id()
         session_dir.mkdir(parents=True, exist_ok=True)
         tokens: dict[str, str] = {}
         session = Session(sender_alias=req.sender.alias, directory=session_dir)
         for f in req.files:
-            if f.size > self.cfg.max_file_size:
-                raise Reject(413, f"file {f.file_name} exceeds size limit")
             safe = sanitize_filename(f.file_name)
             target = session_dir / resolve_collision(session_dir, safe)
             token = secrets.token_urlsafe(32)
@@ -84,7 +102,7 @@ class ReceiverState:
             self.sessions[session_dir.name] = session
         return session_dir.name, tokens
 
-    def upload(self, session_id: str, file_id: str, token: str, rfile, content_length: int | None):
+    def upload(self, session_id: str, file_id: str, token: str, rfile, content_length: int):
         with self.lock:
             session = self.sessions.get(session_id)
             if session is None:
@@ -94,8 +112,6 @@ class ReceiverState:
                 raise Reject(404, "unknown file")
         if token != entry.token:
             raise Reject(401, "invalid token")
-        if content_length is None:
-            raise Reject(411, "content-length required")
         if content_length != entry.size or entry.size > self.cfg.max_file_size:
             raise Reject(413, "size mismatch")
         tmp = tempfile.NamedTemporaryFile(dir=session.directory, delete=False, suffix=".part")
@@ -108,18 +124,24 @@ class ReceiverState:
                 tmp.write(chunk)
                 received += len(chunk)
             tmp.flush()
+            os.replace(tmp.name, entry.target)
         except Reject:
             tmp.close()
             os.unlink(tmp.name)
             raise
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             tmp.close()
             os.unlink(tmp.name)
             raise Reject(500, f"write failed: {exc}") from exc
         finally:
             tmp.close()
-        os.replace(tmp.name, entry.target)
         log.info("received %s from %s", entry.name, session.sender_alias)
+
+    def cancel(self, session_id: str) -> None:
+        with self.lock:
+            session = self.sessions.pop(session_id, None)
+        if session is not None:
+            shutil.rmtree(session.directory, ignore_errors=True)
 
 
 def build_info_json(cfg: Config, fingerprint: str) -> dict:
@@ -144,16 +166,25 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.debug("%s %s", self.address_string(), fmt % args)
 
-    def _send_json(self, status: int, payload: dict | None = None):
+    def _send_json(self, status: int, payload: dict | None = None, close: bool = False):
         body = json.dumps(payload or {"ok": True}).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if close:
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.end_headers()
         self.wfile.write(body)
 
     def _read_json(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            raise Reject(411, "content-length required")
+        try:
+            length = int(raw)
+        except ValueError as exc:
+            raise Reject(400, "malformed content-length") from exc
         if length <= 0 or length > MAX_JSON_BODY:
             raise Reject(400, "invalid body size")
         try:
@@ -191,19 +222,23 @@ class _Handler(BaseHTTPRequestHandler):
                 session_id = (qs.get("sessionId") or [""])[0]
                 file_id = (qs.get("fileId") or [""])[0]
                 token = (qs.get("token") or [""])[0]
-                length = int(self.headers.get("Content-Length") or 0)
-                self.state.upload(session_id, file_id, token, self.rfile, length or None)
+                raw_len = self.headers.get("Content-Length")
+                if raw_len is None:
+                    raise Reject(411, "content-length required")
+                try:
+                    length = int(raw_len)
+                except ValueError as exc:
+                    raise Reject(400, "malformed content-length") from exc
+                self.state.upload(session_id, file_id, token, self.rfile, length)
                 self._send_json(200)
             elif path == f"{API_PREFIX}/cancel":
                 data = self._read_json()
-                sid = str(data.get("sessionId") or "")
-                with self.state.lock:
-                    self.state.sessions.pop(sid, None)
+                self.state.cancel(str(data.get("sessionId") or ""))
                 self._send_json(200)
             else:
                 self._send_json(404, {"error": "not found"})
         except Reject as exc:
-            self._send_json(exc.status, {"error": exc.message})
+            self._send_json(exc.status, {"error": exc.message}, close=True)
 
 
 def make_server(cfg: Config, info_json: dict, cert_dir: str | Path | None = None,

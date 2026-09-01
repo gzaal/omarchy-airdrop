@@ -153,7 +153,6 @@ def test_traversal_filename_sanitized(server):
     assert len(saved) == 1
     assert saved[0].name == "evil.sh"
     assert saved[0].read_bytes() == b"true"
-    assert cfg.download_dir not in saved[0].parents[:2] or True
     top = list(cfg.download_dir.iterdir())
     assert all(d.name == session_id for d in top)
 
@@ -181,10 +180,97 @@ def test_auto_deny(server):
 
 
 def test_missing_content_length(server):
+    # http.client sends "Content-Length: 0" for body-less POST -> size mismatch
     base, cfg = server
     status, resp = prepare(base)
     session_id = resp["sessionId"]
     status, _ = request(base, "POST",
                         f"{API}/upload?sessionId={session_id}&fileId=0&token={resp['files']['0']}",
                         None)
-    assert status in (411, 413, 400)
+    assert status == 413
+
+
+def test_zero_byte_upload(server):
+    base, cfg = server
+    status, resp = prepare(base, files=[FileRequest(file_id="0", file_name="empty.txt", size=0)])
+    assert status == 200
+    session_id = resp["sessionId"]
+    status, _ = request(base, "POST",
+                        f"{API}/upload?sessionId={session_id}&fileId=0&token={resp['files']['0']}",
+                        b"")
+    assert status == 200
+    assert (cfg.download_dir / session_id / "empty.txt").read_bytes() == b""
+
+
+def test_error_response_closes_connection(server):
+    base, cfg = server
+    status, resp = prepare(base)
+    session_id = resp["sessionId"]
+    conn = http.client.HTTPConnection("127.0.0.1", int(base.rsplit(":", 1)[1]), timeout=5)
+    try:
+        conn.request("POST",
+                     f"{API}/upload?sessionId={session_id}&fileId=0&token=wrong",
+                     b"hello")
+        r1 = conn.getresponse()
+        assert r1.status == 401
+        assert r1.getheader("Connection") == "close"
+        r1.read()
+    finally:
+        conn.close()
+    status, _ = request(base, "GET", f"{API}/info")
+    assert status == 200
+
+
+def test_nul_filename_sanitized(server):
+    base, cfg = server
+    evil = FileRequest(file_id="0", file_name="bad\x00name.txt", size=2)
+    status, resp = prepare(base, files=[evil])
+    assert status == 200
+    session_id = resp["sessionId"]
+    status, _ = request(base, "POST",
+                        f"{API}/upload?sessionId={session_id}&fileId=0&token={resp['files']['0']}",
+                        b"ok")
+    assert status == 200
+    names = [p.name for p in (cfg.download_dir / session_id).iterdir()]
+    assert names == ["badname.txt"]
+    assert not any(n.endswith(".part") for n in names)
+
+
+def test_malformed_content_length(server):
+    base, cfg = server
+    status, resp = prepare(base)
+    session_id = resp["sessionId"]
+    conn = http.client.HTTPConnection("127.0.0.1", int(base.rsplit(":", 1)[1]), timeout=5)
+    try:
+        conn.putrequest("POST",
+                        f"{API}/upload?sessionId={session_id}&fileId=0&token={resp['files']['0']}")
+        conn.putheader("Content-Length", "abc")
+        conn.endheaders()
+        r = conn.getresponse()
+        assert r.status == 400
+        r.read()
+    finally:
+        conn.close()
+
+
+def test_session_cap(server):
+    base, cfg = server
+    seen_503 = False
+    for _ in range(20):
+        status, resp = prepare(base)
+        if status == 503:
+            seen_503 = True
+            break
+        assert status == 200
+    assert seen_503
+
+
+def test_cancel_removes_dir(server):
+    base, cfg = server
+    status, resp = prepare(base)
+    session_id = resp["sessionId"]
+    payload = json.dumps({"sessionId": session_id}).encode()
+    status, _ = request(base, "POST", f"{API}/cancel", payload,
+                        {"Content-Type": "application/json"})
+    assert status == 200
+    assert not (cfg.download_dir / session_id).exists()
