@@ -1,0 +1,15 @@
+[Unit]
+Description=AWDL daemon (owl) on %i for omarchy-airdrop
+After=network.target
+ConditionPathExists=/usr/local/bin/owl
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/owl -i %i -c 6
+Restart=on-failure
+RestartSec=5
+# owl needs raw monitor-mode access; it must run as root
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target
