@@ -8,13 +8,13 @@ AirDrop is not a simple network protocol. It is three stacked proprietary pieces
 
 | Layer | What it is | Open implementation |
 |---|---|---|
-| AWDL | Apple Wireless Direct Link — proprietary frames over Wi-Fi, creates the `awdl0` interface (no router needed) | `owl` / `owlinux170` (Seemoo Lab, userspace C) |
+| AWDL | Apple Wireless Direct Link — proprietary frames over Wi-Fi, creates the `awdl0` interface (no router needed) | `owl` (Seemoo Lab, userspace C) |
 | Discovery | BLE advertisements + mDNS (`_airdrop._tcp`, TLS) over awdl0 | OpenDrop (Python) |
 | Transfer | HTTPS with Apple-signed TLS client certificates, signed identity records | OpenDrop (partially — see caveats) |
 
-**Hardware constraint:** AWDL userspace implementations need monitor-mode capable adapters from their tested list (`owlinux170` supports e.g. Intel 7260/8260/8265; `owl` supports some Atheros). Your current Intel CNVi (iwlwifi, AX-class) is **not** supported. Options:
+**Hardware constraint:** OWL needs a card with *active* monitor mode (frame injection + ACK); recommended chip is **Atheros AR9280** (see owl issue #9). Your current Intel CNVi (iwlwifi, AX-class) is passive-monitor only and expected to fail. Options:
 
-1. Use a cheap supported USB Wi-Fi adapter dedicated to AWDL (recommended — ethernet stays primary).
+1. Use a cheap supported USB Wi-Fi adapter dedicated to AWDL (Atheros AR9280-based — recommended, ethernet stays primary).
 2. Skip AWDL entirely and use LAN-based LocalSend-protocol mode (works anywhere, but not *native* AirDrop).
 
 **Protocol constraint:** recent macOS/iOS versions tightened AirDrop's certificate/identity handling. OpenDrop's interop with stock Apple devices is experimental and breaks with OS updates. Treat "works with my iPhone on iOS 18" as the acceptance test, not a guarantee.
@@ -48,7 +48,7 @@ omarchy-airdrop/
 ## 3. Phases
 
 ### Phase 0 — Feasibility spike (do this before writing the plugin)
-- [ ] Buy/borrow a supported USB adapter (check `owlinux170` tested-hardware list).
+- [ ] Obtain a supported USB adapter (Atheros AR9280-based; check owl issue #9 for tested cards)
 - [ ] Build `owl`/`owlinux170` on Arch, get `awdl0` up, see Apple devices appear in mDNS.
 - [ ] Run upstream `opendrop` CLI end-to-end once: iPhone → Linux and Linux → iPhone.
 - [ ] Decision gate: if interop works → continue. If not → keep Phase 1 (fallback mode) as the product and note the limitation.
