@@ -13,7 +13,7 @@ if (($# == 0)); then
 fi
 
 FILES=("$@")
-AIRDROP="${AIRDROP_BIN:-$HOME/.local/bin/airdrop}"
+AIRDROP="${AIRDROP_BIN:-$(command -v airdrop 2>/dev/null || echo "$HOME/.local/bin/airdrop")}"
 
 if [[ ! -x $AIRDROP ]]; then
   omarchy-notification-send --app-name airdrop -u critical \

@@ -19,23 +19,28 @@ sha256sums=(SKIP)
 
 pkgver() {
   cd "$srcdir/${pkgname}"
-  git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || echo "0.1.0.r0"
-}
-
-build() {
-  cd "$srcdir/${pkgname}"
-  python3 -m compileall -q airdropd
+  local desc
+  desc=$(git describe --long --tags 2>/dev/null || true)
+  if [[ -n $desc ]]; then
+    echo "${desc#v}" | sed 's/\([^-]*-g\)/r\1/;s/-/./g'
+  else
+    echo "0.1.0.r0.$(git rev-list --count HEAD)"
+  fi
 }
 
 package() {
   cd "$srcdir/${pkgname}"
+  local site
+  site="$(python3 -c 'import sys; print("/usr/lib/python" + sys.version[:3] + "/site-packages")')"
+  install -d "$pkgdir$site"
+  cp -r airdropd "$pkgdir$site/"
+  find "$pkgdir$site" -name '__pycache__' -type d -exec rm -rf {} +
+
+  # the bin/airdrop wrapper handles both git installs (repo dir) and
+  # system installs: it falls back to the default sys.path, which now
+  # contains $site
   install -Dm755 bin/airdrop "$pkgdir/usr/bin/airdrop"
   install -Dm755 ui/airdrop-share "$pkgdir/usr/bin/airdrop-share"
-
-  local site="$pkgdir/usr/lib/python3/site-packages"
-  mkdir -p "$site"
-  cp -r airdropd "$site/"
-  find "$site" -name '__pycache__' -type d -exec rm -rf {} +
 
   install -Dm644 systemd/airdropd.service "$pkgdir/usr/lib/systemd/user/airdropd.service"
   install -Dm644 systemd/airdropd-owl@.service "$pkgdir/usr/lib/systemd/system/airdropd-owl@.service"

@@ -4,9 +4,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="${HOME}/.local/bin"
-PLUGIN_DIR="${HOME}/.config/omarchy/plugins/${USER}.airdrop"
-UI_DIR="${HOME}/.local/share/omarchy-airdrop"
-SERVICE_DIR="${HOME}/.config/systemd/user"
+PLUGIN_DIR="${HOME}/.config/omarchy/plugins/${USER:-$(id -un)}.airdrop"
 
 info() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m==>\033[0m %s\n' "$*"; }
@@ -29,7 +27,7 @@ if [[ -d "$HOME/.config/omarchy" ]]; then
   rm -rf "$PLUGIN_DIR"
   mkdir -p "$(dirname "$PLUGIN_DIR")"
   cp -r "$REPO_DIR/ui/omarchy-plugin/omarchy-airdrop" "$PLUGIN_DIR"
-  info "enable the widget with: omarchy bar add ${USER}.airdrop"
+  info "enable the widget with: omarchy bar put ${USER:-$(id -un)}.airdrop"
 else
   warn "no ~/.config/omarchy — skipping shell plugin"
 fi
@@ -41,8 +39,11 @@ ln -sfn "$REPO_DIR/ui/airdrop-share" "$BIN_DIR/airdrop-share"
 ## systemd user service
 info "installing systemd user service airdropd"
 mkdir -p "$HOME/.config/systemd/user"
-cp "$REPO_DIR/systemd/airdropd.service" "$HOME/.config/systemd/user/airdropd.service"
-sed -i "s|__REPO_DIR__|$REPO_DIR|g" "$HOME/.config/systemd/user/airdropd.service"
+service_file="$HOME/.config/systemd/user/airdropd.service"
+{
+  printf '%s\n' "$(cat "$REPO_DIR/systemd/airdropd.service" | sed "s/__REPO_DIR__/$(printf '%s' "$REPO_DIR" | sed 's/[&|\\]/\\&/g')/g")"
+} > "$service_file"
+chmod 644 "$service_file"
 systemctl --user daemon-reload
 
 ## default config
@@ -50,7 +51,7 @@ mkdir -p "$HOME/.config/omarchy-airdrop"
 if [[ ! -f "$HOME/.config/omarchy-airdrop/config.json" ]]; then
   cat > "$HOME/.config/omarchy-airdrop/config.json" <<EOF
 {
-  "alias": "$(hostname)",
+  "alias": "$(uname -n)",
   "download_dir": "$HOME/Drop/AirDrop",
   "port": 53317,
   "protocol": "https",

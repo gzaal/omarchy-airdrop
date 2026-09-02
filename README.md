@@ -70,8 +70,12 @@ Setup once the adapter is present:
 
 1. Build/install [owl](https://github.com/seemoo-lab/owl) and
    [opendrop](https://github.com/seemoo-lab/opendrop).
-2. Enable the root AWDL daemon on your *physical* wifi interface (e.g. `wlp3s0`):
+2. Enable the root AWDL daemon on your *physical* wifi interface (e.g. `wlp3s0`),
+   using the unit from the repo (the PKGBUILD installs it to
+   `/usr/lib/systemd/system/airdropd-owl@.service`):
    ```sh
+   sudo cp systemd/airdropd-owl@.service /etc/systemd/system/
+   sudo systemctl daemon-reload
    sudo systemctl enable --now airdropd-owl@wlp3s0.service
    ```
    owl creates the virtual `awdl0` interface.
