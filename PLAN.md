@@ -83,7 +83,12 @@ omarchy-airdrop/
 - [ ] Transfer resumption for large files, sender-name spoofing protections.
 - [ ] Test matrix: iPhone (2 recent iOS versions), MacBook, Android via LocalSend.
 
-## 4. Key risks
+## 4. Status (2026-09-02)
+
+All phases implemented and merged (issues #2–#6, PRs #7–#11, tags v0.1.0/v0.1.1).
+Phase 0 live AWDL interop test remains hardware-gated — see PHASE0.md.
+
+## 5. Key risks
 - **Your Wi-Fi card can't do AWDL** — mitigation: supported USB adapter, or ship as LAN-only.
 - **Apple changes the protocol** with OS updates — interop is best-effort; pin tested iOS/macOS versions in docs.
 - **Root requirement for monitor mode** — isolate in a minimal root helper service, no broad sudo.
