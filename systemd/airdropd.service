@@ -1,0 +1,13 @@
+[Unit]
+Description=omarchy-airdrop receiver (LocalSend v2 compatible)
+After=graphical-session.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__REPO_DIR__/bin/airdrop receive
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
