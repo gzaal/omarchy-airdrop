@@ -53,10 +53,10 @@ class Announce(DeviceInfo):
             if not 0 < port <= 65535 or protocol not in ("http", "https"):
                 return None
             return cls(
-                alias=str(data["alias"]),
-                fingerprint=str(data["fingerprint"]),
-                device_model=str(data.get("deviceModel") or ""),
-                device_type=str(data.get("deviceType") or ""),
+                alias=sanitize_label(str(data["alias"])),
+                fingerprint=sanitize_label(str(data["fingerprint"]), 128),
+                device_model=sanitize_label(str(data.get("deviceModel") or ""), 32),
+                device_type=sanitize_label(str(data.get("deviceType") or ""), 32),
                 port=port,
                 protocol=protocol,
                 download=bool(data.get("download", False)),
@@ -127,6 +127,13 @@ def new_session_id() -> str:
 
 
 _WHITESPACE_RE = re.compile(r"\s+")
+
+
+def sanitize_label(text: str, limit: int = 64) -> str:
+    """Make untrusted display text (aliases, names) safe for menus/argv."""
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", "", text)
+    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
+    return cleaned[:limit]
 
 
 def sanitize_filename(name: str) -> str:
