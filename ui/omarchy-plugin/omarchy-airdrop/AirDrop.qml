@@ -8,9 +8,10 @@ BarWidget {
   id: root
   moduleName: "omarchy-airdrop"
 
-  property string state: "off" // off | running | peers
+  property string receiverState: "off" // off | running | peers
+  property bool receiverRunning: false
   property int peerCount: 0
-  property string detail: "airdrop not running"
+  property string detail: "airdrop not installed"
 
   function refresh() {
     if (!statusProc.running) statusProc.running = true
@@ -31,16 +32,22 @@ BarWidget {
   Process {
     id: statusProc
     command: [Quickshell.env("HOME") + "/.local/bin/airdrop", "status"]
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.receiverRunning = false
+        root.detail = "airdrop not installed"
+        root.receiverState = "off"
+        root.peerCount = 0
+      }
+    }
     stdout: StdioCollector {
       onStreamFinished: {
         var running = false
-        var iface = "none"
-        var peers = 0
         var lines = text.split("\n")
         for (var i = 0; i < lines.length; i++) {
-          var line = lines[i]
-          if (line.startsWith("receiver:")) running = line.indexOf("running") >= 0
+          if (lines[i].startsWith("receiver:")) running = lines[i].indexOf("running") >= 0
         }
+        root.receiverRunning = running
         peersProc.running = true
       }
     }
@@ -51,10 +58,16 @@ BarWidget {
     command: [Quickshell.env("HOME") + "/.local/bin/airdrop", "peers", "--timeout", "1.0"]
     stdout: StdioCollector {
       onStreamFinished: {
-        var lines = text.trim().split("\n")
-        root.peerCount = Math.max(0, lines.length - 1)
-        root.state = running && root.peerCount > 0 ? "peers" : (running ? "running" : "off")
-        root.detail = running ? ("receiver up" + (root.peerCount > 0 ? " — " + root.peerCount + " peer(s)" : "")) : "airdrop not running"
+        var count = 0
+        var trimmed = text.trim()
+        if (trimmed.length > 0 && !trimmed.startsWith("no peers")) {
+          count = Math.max(0, trimmed.split("\n").length - 1)
+        }
+        root.peerCount = count
+        root.receiverState = root.receiverRunning && count > 0 ? "peers" : (root.receiverRunning ? "running" : "off")
+        root.detail = root.receiverRunning
+            ? ("receiver up" + (count > 0 ? " — " + count + " peer(s)" : ""))
+            : "airdrop not running"
       }
     }
   }
@@ -71,12 +84,12 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.state === "off" ? "\uf0e0" : "\uf0f0"
+    text: root.receiverState === "off" ? "\uf0e0" : "\uf0f0"
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
     tooltipText: root.detail
     onPressed: {
-      if (root.state === "off") {
+      if (root.receiverState === "off") {
         root.bar.run("omarchy-launch-floating-terminal airdrop receive --prompt")
       } else {
         root.bar.run("omarchy-launch-floating-terminal airdrop peers")

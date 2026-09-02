@@ -193,6 +193,8 @@ def cmd_receive(args) -> int:
     cfg = cfgmod.load(args.config_dir)
     if args.accept_policy:
         cfg.accept_policy = args.accept_policy
+    elif args.prompt:
+        cfg.accept_policy = "ask"
     _apply_overrides(cfg, args)
     if args.download_dir:
         cfg.download_dir = Path(args.download_dir).expanduser()

@@ -15,6 +15,12 @@ fi
 FILES=("$@")
 AIRDROP="${AIRDROP_BIN:-$HOME/.local/bin/airdrop}"
 
+if [[ ! -x $AIRDROP ]]; then
+  omarchy-notification-send --app-name airdrop -u critical \
+    "airdrop not installed" "Expected $AIRDROP (run install.sh)" 2>/dev/null || true
+  exit 1
+fi
+
 peers=$("$AIRDROP" peers --timeout 2 2>/dev/null | tail -n +2) || peers=""
 if [[ -z $peers ]]; then
   omarchy-notification-send --app-name airdrop -u critical \
@@ -22,17 +28,31 @@ if [[ -z $peers ]]; then
   exit 1
 fi
 
-selection=$(printf '%s\n' "$peers" | awk '{print $1}' | omarchy-menu-select "Send to" 2>/dev/null || true)
+# numbered menu; alias may contain spaces, so map the choice back by row
+mapfile -t ALIASES < <(printf '%s\n' "$peers" | awk '{print $1}')
+OPTIONS=()
+for i in "${!ALIASES[@]}"; do
+  OPTIONS+=("${ALIASES[$i]}")
+done
+
+selection=$(printf '%s\n' "${OPTIONS[@]}" | omarchy-menu-select "Send to" 2>/dev/null || true)
 if [[ -z ${selection:-} ]]; then
   exit 0
 fi
 
-if omarchy-notification-send --app-name airdrop "Sending" \
-    "Sending ${#FILES[@]} file(s) to $selection" 2>/dev/null; then
-  :
-fi
+target=""
+for a in "${ALIASES[@]}"; do
+  if [[ $a == "$selection" ]]; then
+    target="$selection"
+    break
+  fi
+done
+target="${target:-$selection}"
 
-if systemd-run --user --quiet --collect airdrop send --to "$selection" "${FILES[@]}"; then
+omarchy-notification-send --app-name airdrop "Sending" \
+  "Sending ${#FILES[@]} file(s) to $target" 2>/dev/null || true
+
+if systemd-run --user --quiet --collect "$AIRDROP" send --to "$target" "${FILES[@]}"; then
   exit 0
 fi
 

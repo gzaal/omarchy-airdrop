@@ -85,7 +85,8 @@ def _noop_log(name: str, pct: int) -> None:
 
 def prepare_upload(peer: Peer, sender: DeviceInfo,
                    files: list[FileRequest]) -> tuple[str, dict[str, str]]:
-    conn = _connection(peer)
+    # the receiver may show an accept menu (60s), so allow a generous timeout
+    conn = _connection(peer, timeout=90.0)
     try:
         resp = _post_json(conn, f"{API_PREFIX}/prepare-upload",
                           build_prepare_upload_request(sender, files))
