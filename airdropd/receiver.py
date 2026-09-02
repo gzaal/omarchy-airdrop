@@ -58,10 +58,12 @@ SESSION_TTL = 30 * 60
 
 
 class ReceiverState:
-    def __init__(self, cfg: Config, info_json: dict, prompt=None):
+    def __init__(self, cfg: Config, info_json: dict, prompt=None,
+                 on_file_received=None):
         self.cfg = cfg
         self.info_json = info_json
         self.prompt = prompt
+        self.on_file_received = on_file_received
         self.sessions: dict[str, Session] = {}
         self.lock = threading.Lock()
 
@@ -136,6 +138,11 @@ class ReceiverState:
         finally:
             tmp.close()
         log.info("received %s from %s", entry.name, session.sender_alias)
+        if self.on_file_received is not None:
+            try:
+                self.on_file_received(entry.name, session.sender_alias, entry.target)
+            except Exception:
+                log.debug("on_file_received hook failed", exc_info=True)
 
     def cancel(self, session_id: str) -> None:
         with self.lock:
@@ -242,10 +249,12 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 def make_server(cfg: Config, info_json: dict, cert_dir: str | Path | None = None,
-                port: int | None = None, prompt=None, protocol: str | None = None):
+                port: int | None = None, prompt=None, protocol: str | None = None,
+                on_file_received=None):
     proto = protocol or cfg.protocol
     bind_port = port if port is not None else cfg.port
-    state = ReceiverState(cfg, info_json, prompt=prompt)
+    state = ReceiverState(cfg, info_json, prompt=prompt,
+                          on_file_received=on_file_received)
     httpd = ThreadingHTTPServer(("0.0.0.0", bind_port), _Handler)
     httpd.state = state  # type: ignore[attr-defined]
     if proto == "https":

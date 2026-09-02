@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "zalo.airdrop",
+  "name": "AirDrop",
+  "version": "0.1.0",
+  "author": "gzaal",
+  "description": "AirDrop receiver/sender status for omarchy-airdrop",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "AirDrop.qml"
+  },
+  "barWidget": {
+    "displayName": "AirDrop",
+    "description": "Shows omarchy-airdrop receiver and peer status",
+    "category": "System",
+    "allowMultiple": false
+  }
+}

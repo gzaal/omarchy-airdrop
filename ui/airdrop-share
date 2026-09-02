@@ -1,0 +1,61 @@
+#!/bin/bash
+# omarchy:summary=Send files to nearby devices with omarchy-airdrop
+# omarchy:group=share
+# omarchy:name=
+# omarchy:args=<file...>
+# omarchy:examples=airdrop-share ~/Downloads/example.txt
+
+set -euo pipefail
+
+if (($# == 0)); then
+  echo "Usage: airdrop-share <file...>" >&2
+  exit 1
+fi
+
+FILES=("$@")
+AIRDROP="${AIRDROP_BIN:-$HOME/.local/bin/airdrop}"
+
+if [[ ! -x $AIRDROP ]]; then
+  omarchy-notification-send --app-name airdrop -u critical \
+    "airdrop not installed" "Expected $AIRDROP (run install.sh)" 2>/dev/null || true
+  exit 1
+fi
+
+peers=$("$AIRDROP" peers --timeout 2 2>/dev/null | tail -n +2) || peers=""
+if [[ -z $peers ]]; then
+  omarchy-notification-send --app-name airdrop -u critical \
+    "No peers found" "Make sure the receiver is running on the target device" 2>/dev/null || true
+  exit 1
+fi
+
+# numbered menu; alias may contain spaces, so map the choice back by row
+mapfile -t ALIASES < <(printf '%s\n' "$peers" | awk '{print $1}')
+OPTIONS=()
+for i in "${!ALIASES[@]}"; do
+  OPTIONS+=("${ALIASES[$i]}")
+done
+
+selection=$(printf '%s\n' "${OPTIONS[@]}" | omarchy-menu-select "Send to" 2>/dev/null || true)
+if [[ -z ${selection:-} ]]; then
+  exit 0
+fi
+
+target=""
+for a in "${ALIASES[@]}"; do
+  if [[ $a == "$selection" ]]; then
+    target="$selection"
+    break
+  fi
+done
+target="${target:-$selection}"
+
+omarchy-notification-send --app-name airdrop "Sending" \
+  "Sending ${#FILES[@]} file(s) to $target" 2>/dev/null || true
+
+if systemd-run --user --quiet --collect "$AIRDROP" send --to "$target" "${FILES[@]}"; then
+  exit 0
+fi
+
+omarchy-notification-send --app-name airdrop -u critical \
+  "Send failed" "Could not start airdrop send" 2>/dev/null || true
+exit 1
