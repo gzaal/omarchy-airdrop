@@ -40,11 +40,9 @@ ln -sfn "$REPO_DIR/ui/airdrop-share" "$BIN_DIR/airdrop-share"
 info "installing systemd user service airdropd"
 mkdir -p "$HOME/.config/systemd/user"
 service_file="$HOME/.config/systemd/user/airdropd.service"
-{
-  printf '%s\n' "$(cat "$REPO_DIR/systemd/airdropd.service" | sed "s/__REPO_DIR__/$(printf '%s' "$REPO_DIR" | sed 's/[&|\\]/\\&/g')/g")"
-} > "$service_file"
+template="$(cat "$REPO_DIR/systemd/airdropd.service")"
+printf '%s\n' "${template//__REPO_DIR__/$REPO_DIR}" > "$service_file"
 chmod 644 "$service_file"
-systemctl --user daemon-reload
 
 ## default config
 mkdir -p "$HOME/.config/omarchy-airdrop"
