@@ -41,18 +41,16 @@ def resolve_prompt(prompt: bool | None, prompt_ui: str, isatty: bool):
     """Decide the accept-prompt callback. Returns None (deny-all) or callable."""
     from airdropd import desktop
 
-    want_prompt = bool(prompt) or prompt_ui == "stdin"
-    if not want_prompt:
-        return None
     backend = desktop.make_prompt(prompt_ui)
     if backend is not None:
         return backend
-    if isatty:
-        if prompt_ui != "stdin":
-            log.warning("no menu backend available; falling back to stdin prompts")
-        return _stdin_prompt
-    log.warning("no prompt backend available in this environment; "
-                "incoming transfers will be denied")
+    if prompt or prompt_ui == "stdin":
+        if isatty:
+            if prompt_ui != "stdin":
+                log.warning("no menu backend available; falling back to stdin prompts")
+            return _stdin_prompt
+        log.warning("no prompt backend available in this environment; "
+                    "incoming transfers will be denied")
     return None
 
 
