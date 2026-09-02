@@ -196,8 +196,10 @@ def cmd_receive(args) -> int:
     _apply_overrides(cfg, args)
     if args.download_dir:
         cfg.download_dir = Path(args.download_dir).expanduser()
+    prompt = True if args.prompt else None
     run_receiver(cfg, cert_dir=cfgmod.config_dir(args.config_dir),
-                 prompt=args.prompt and sys.stdin.isatty())
+                 prompt=prompt, prompt_ui=args.prompt_ui,
+                 notifications=not args.no_notifications)
     return 0
 
 
@@ -253,7 +255,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_send.set_defaults(fn=cmd_send)
 
     p_recv = sub.add_parser("receive", help="run the receiver")
-    p_recv.add_argument("--prompt", action="store_true", help="ask before accepting")
+    p_recv.add_argument("--prompt", action="store_true",
+                        help="ask before accepting (uses menu if available, else stdin)")
+    p_recv.add_argument("--prompt-ui", choices=("auto", "menu", "stdin"),
+                        default="auto", help="accept-prompt backend")
+    p_recv.add_argument("--no-notifications", action="store_true",
+                        help="disable desktop notifications for received files")
     p_recv.add_argument("--download-dir")
     p_recv.add_argument("--accept-policy", choices=cfgmod.ACCEPT_POLICIES)
     p_recv.add_argument("--airdrop", action="store_true",

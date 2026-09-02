@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 
 from airdropd import identity
@@ -17,6 +18,15 @@ def _stdin_prompt(sender_alias: str, summary: str) -> bool:
     return answer in ("y", "yes")
 
 
+def _default_on_file_received(name: str, sender_alias: str, path) -> None:
+    try:
+        from airdropd import desktop
+
+        desktop.notify("File received", f"{name} from {sender_alias}")
+    except Exception:
+        log.debug("notify failed", exc_info=True)
+
+
 def make_announce(cfg: Config, fingerprint: str, download: bool = False) -> Announce:
     return Announce(
         alias=cfg.alias,
@@ -27,7 +37,8 @@ def make_announce(cfg: Config, fingerprint: str, download: bool = False) -> Anno
     )
 
 
-def run_receiver(cfg: Config, cert_dir=None, prompt: bool = False):
+def run_receiver(cfg: Config, cert_dir=None, prompt: bool | None = None,
+                 prompt_ui: str = "auto", notifications: bool = True):
     download_dir = ensure_download_dir(cfg)
     if cfg.protocol == "https":
         paths = identity.ensure_cert(cert_dir or _default_cert_dir(), cfg.alias)
@@ -38,8 +49,16 @@ def run_receiver(cfg: Config, cert_dir=None, prompt: bool = False):
     else:
         fingerprint = "http-no-tls"
     info_json = build_info_json(cfg, fingerprint)
-    prompt_fn = _stdin_prompt if prompt else None
-    httpd = make_server(cfg, info_json, cert_dir=cert_dir, prompt=prompt_fn)
+    prompt_fn = None
+    if prompt or (prompt is None and cfg.accept_policy == "ask"):
+        from airdropd import desktop
+
+        prompt_fn = desktop.make_prompt(prompt_ui)
+        if prompt_fn is None and prompt and sys.stdin.isatty():
+            prompt_fn = _stdin_prompt
+    on_file = _default_on_file_received if notifications else None
+    httpd = make_server(cfg, info_json, cert_dir=cert_dir, prompt=prompt_fn,
+                        on_file_received=on_file)
     announce = make_announce(cfg, fingerprint)
     stop = threading.Event()
     start_responder(announce, port=cfg.port, stop_event=stop)
