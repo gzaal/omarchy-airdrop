@@ -91,10 +91,10 @@ class PrepareUploadRequest:
         try:
             info = data["info"]
             sender = DeviceInfo(
-                alias=str(info["alias"]),
-                fingerprint=str(info.get("fingerprint", "")),
-                device_model=str(info.get("deviceModel") or ""),
-                device_type=str(info.get("deviceType") or ""),
+                alias=sanitize_label(str(info["alias"])),
+                fingerprint=sanitize_label(str(info.get("fingerprint", "")), 128),
+                device_model=sanitize_label(str(info.get("deviceModel") or ""), 32),
+                device_type=sanitize_label(str(info.get("deviceType") or ""), 32),
             )
             files = []
             for file_id, meta in data["files"].items():

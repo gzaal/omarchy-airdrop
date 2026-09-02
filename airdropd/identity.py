@@ -19,6 +19,12 @@ def ensure_cert(config_dir: str | Path, alias: str) -> tuple[Path, Path] | None:
     cert = d / "cert.pem"
     key = d / "key.pem"
     if cert.is_file() and key.is_file():
+        try:
+            os.chmod(key, 0o600)
+            os.chmod(cert, 0o600)
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
         return cert, key
     # CN must be a single line without slashes for openssl -subj
     cn = alias.replace("/", "-").replace("\\", "-").strip() or "airdrop"

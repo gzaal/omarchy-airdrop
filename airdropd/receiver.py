@@ -22,7 +22,6 @@ from airdropd.localsend import (
     UPLOAD_CHUNK,
     build_prepare_upload_response,
     new_session_id,
-    resolve_collision,
     sanitize_filename,
 )
 
@@ -124,6 +123,10 @@ class ReceiverState:
                 self.sessions.pop(session_dir.name, None)
             shutil.rmtree(session_dir, ignore_errors=True)
             raise
+        except OSError as exc:
+            with self.lock:
+                self.sessions.pop(session_dir.name, None)
+            raise Reject(500, f"cannot create download directory: {exc}") from exc
         return session_dir.name, tokens
 
     def upload(self, session_id: str, file_id: str, token: str, rfile, content_length: int):
@@ -134,7 +137,8 @@ class ReceiverState:
             entry = session.files.get(file_id)
             if entry is None:
                 raise Reject(404, "unknown file")
-        if not secrets.compare_digest(token, entry.token):
+        if not secrets.compare_digest(token.encode("utf-8", "replace"),
+                                      entry.token.encode("utf-8", "replace")):
             raise Reject(401, "invalid token")
         if content_length < 0 or content_length > self.cfg.max_file_size:
             raise Reject(413, "invalid content-length")
@@ -235,7 +239,7 @@ class _Handler(BaseHTTPRequestHandler):
         if path == f"{API_PREFIX}/info":
             self._send_json(200, self.state.info_json)
         else:
-            self._send_json(404, {"error": "not found"})
+            self._send_json(404, {"error": "not found"}, close=True)
 
     def do_POST(self):
         url = urlparse(self.path)
