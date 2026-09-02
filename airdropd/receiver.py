@@ -22,7 +22,6 @@ from airdropd.localsend import (
     UPLOAD_CHUNK,
     build_prepare_upload_response,
     new_session_id,
-    resolve_collision,
     sanitize_filename,
 )
 
@@ -55,6 +54,7 @@ class Session:
 
 MAX_OPEN_SESSIONS = 16
 SESSION_TTL = 30 * 60
+MAX_FILES_PER_SESSION = 512
 
 
 class ReceiverState:
@@ -76,32 +76,57 @@ class ReceiverState:
     def open_session(self, req: PrepareUploadRequest) -> tuple[str, dict[str, str]]:
         if self.cfg.accept_policy == "auto-deny":
             raise Reject(403, "receiver is not accepting files")
+        if len(req.files) > MAX_FILES_PER_SESSION:
+            raise Reject(400, "too many files in one transfer")
         for f in req.files:
+            if f.size < 0:
+                raise Reject(400, "invalid file size")
             if f.size > self.cfg.max_file_size:
                 raise Reject(413, f"file {f.file_name} exceeds size limit")
-        summary = ", ".join(f"{f.file_name} ({f.size} bytes)" for f in req.files)
+        # prompt text is attacker-influenced: sanitized names only
+        shown = [sanitize_filename(f.file_name) for f in req.files[:5]]
+        summary = ", ".join(shown)
+        if len(req.files) > 5:
+            summary += f" and {len(req.files) - 5} more"
         if self.cfg.accept_policy == "ask":
             if self.prompt is None or not self.prompt(req.sender.alias, summary):
                 log.info("rejected transfer from %s", req.sender.alias)
                 raise Reject(403, "transfer rejected by user")
-        with self.lock:
-            self._gc_locked(time.monotonic())
-            if len(self.sessions) >= MAX_OPEN_SESSIONS:
-                raise Reject(503, "too many pending transfers")
         session_dir = Path(self.cfg.download_dir).expanduser() / new_session_id()
-        session_dir.mkdir(parents=True, exist_ok=True)
-        tokens: dict[str, str] = {}
         session = Session(sender_alias=req.sender.alias, directory=session_dir)
-        for f in req.files:
-            safe = sanitize_filename(f.file_name)
-            target = session_dir / resolve_collision(session_dir, safe)
-            token = secrets.token_urlsafe(32)
-            session.files[f.file_id] = PendingFile(
-                token=token, name=safe, size=f.size, target=target
-            )
-            tokens[f.file_id] = token
-        with self.lock:
-            self.sessions[session_dir.name] = session
+        tokens: dict[str, str] = {}
+        try:
+            with self.lock:
+                self._gc_locked(time.monotonic())
+                if len(self.sessions) >= MAX_OPEN_SESSIONS:
+                    raise Reject(503, "too many pending transfers")
+                # reserve the slot atomically; files are filled in below
+                self.sessions[session_dir.name] = session
+            session_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            used: set[str] = set()
+            for f in req.files:
+                safe = sanitize_filename(f.file_name)
+                stem, ext = os.path.splitext(safe)
+                candidate, n = safe, 1
+                while candidate in used:
+                    candidate = f"{stem} ({n}){ext}"
+                    n += 1
+                used.add(candidate)
+                target = session_dir / candidate
+                token = secrets.token_urlsafe(32)
+                session.files[f.file_id] = PendingFile(
+                    token=token, name=safe, size=f.size, target=target
+                )
+                tokens[f.file_id] = token
+        except Reject:
+            with self.lock:
+                self.sessions.pop(session_dir.name, None)
+            shutil.rmtree(session_dir, ignore_errors=True)
+            raise
+        except OSError as exc:
+            with self.lock:
+                self.sessions.pop(session_dir.name, None)
+            raise Reject(500, f"cannot create download directory: {exc}") from exc
         return session_dir.name, tokens
 
     def upload(self, session_id: str, file_id: str, token: str, rfile, content_length: int):
@@ -112,8 +137,11 @@ class ReceiverState:
             entry = session.files.get(file_id)
             if entry is None:
                 raise Reject(404, "unknown file")
-        if token != entry.token:
+        if not secrets.compare_digest(token.encode("utf-8", "replace"),
+                                      entry.token.encode("utf-8", "replace")):
             raise Reject(401, "invalid token")
+        if content_length < 0 or content_length > self.cfg.max_file_size:
+            raise Reject(413, "invalid content-length")
         if content_length != entry.size or entry.size > self.cfg.max_file_size:
             raise Reject(413, "size mismatch")
         tmp = tempfile.NamedTemporaryFile(dir=session.directory, delete=False, suffix=".part")
@@ -137,6 +165,10 @@ class ReceiverState:
             raise Reject(500, f"write failed: {exc}") from exc
         finally:
             tmp.close()
+        with self.lock:
+            if session_id in self.sessions:
+                # activity-based TTL: keep long transfers alive
+                session.created = time.monotonic()
         log.info("received %s from %s", entry.name, session.sender_alias)
         if self.on_file_received is not None:
             try:
@@ -207,7 +239,7 @@ class _Handler(BaseHTTPRequestHandler):
         if path == f"{API_PREFIX}/info":
             self._send_json(200, self.state.info_json)
         else:
-            self._send_json(404, {"error": "not found"})
+            self._send_json(404, {"error": "not found"}, close=True)
 
     def do_POST(self):
         url = urlparse(self.path)
@@ -243,7 +275,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self.state.cancel(str(data.get("sessionId") or ""))
                 self._send_json(200)
             else:
-                self._send_json(404, {"error": "not found"})
+                self._send_json(404, {"error": "not found"}, close=True)
         except Reject as exc:
             self._send_json(exc.status, {"error": exc.message}, close=True)
 

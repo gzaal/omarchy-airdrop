@@ -35,7 +35,9 @@ def _connection(peer: Peer, timeout: float = 10.0) -> http.client.HTTPConnection
         der = conn.sock.getpeercert(binary_form=True)
         if der is not None:
             actual = hashlib.sha256(der).hexdigest()
-            if _FP_RE.fullmatch(peer.fingerprint) and actual != peer.fingerprint:
+            # fail closed: an https peer with a malformed fingerprint is a
+            # discovery spoof, not a skip-pinning situation
+            if not _FP_RE.fullmatch(peer.fingerprint) or actual != peer.fingerprint:
                 conn.close()
                 raise SendError(
                     f"{peer.alias}: certificate fingerprint mismatch (possible MITM)"

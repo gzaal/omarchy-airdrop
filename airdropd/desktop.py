@@ -50,11 +50,15 @@ def menu_select(prompt: str, options: list[str], timeout: float = 60) -> str | N
     else:
         cmd = ["rofi", "-dmenu", "-p", prompt, "-no-custom"]
         input_text = "\n".join(options)
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
-        text=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError as exc:
+        log.warning("could not launch menu %r: %s", cmd[0], exc)
+        return None
     try:
         out, _ = proc.communicate(input=input_text, timeout=timeout)
     except subprocess.TimeoutExpired:

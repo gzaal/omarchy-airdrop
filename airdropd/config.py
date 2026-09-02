@@ -73,9 +73,11 @@ def load(override: str | Path | None = None) -> Config:
 
 def save(cfg: Config, override: str | Path | None = None) -> Path:
     d = config_dir(override)
-    d.mkdir(parents=True, exist_ok=True)
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = config_path(override)
-    path.write_text(json.dumps(cfg.to_json(), indent=2) + "\n", encoding="utf-8")
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg.to_json(), indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
     return path
 
 
